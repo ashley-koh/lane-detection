@@ -8,7 +8,7 @@ on the Jetson Xavier NX due to its excellent speed/accuracy tradeoff.
 import torch
 import torch.nn as nn
 from torchvision import models
-from torchvision.models import MobileNet_V3_Small_Weights
+from torchvision.models import MobileNet_V3_Large_Weights, MobileNet_V3_Small_Weights
 
 from .base import LaneDetectorBase, ModelConfig, RegressionHead
 
@@ -107,6 +107,67 @@ class MobileNetV3LaneV2(LaneDetectorBase):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.backbone(x)
+        output = self.head(features)
+        return output
+
+
+class MobileNetV3LargeLane(LaneDetectorBase):
+    """
+    MobileNetV3-Large based lane detection model.
+
+    Architecture:
+    - Backbone: MobileNetV3-Large (pretrained on ImageNet)
+    - Head: Custom regression head with Tanh output
+
+    This variant offers higher accuracy than MobileNetV3-Small
+    at the cost of increased latency and model size.
+
+    Args:
+        pretrained: Whether to use ImageNet pretrained weights
+        dropout: Dropout rate in regression head
+        config: Model configuration
+    """
+
+    def __init__(
+        self,
+        pretrained: bool = True,
+        dropout: float = 0.3,
+        config: ModelConfig | None = None,
+    ):
+        super().__init__(config)
+
+        # Load pretrained backbone
+        weights = MobileNet_V3_Large_Weights.IMAGENET1K_V1 if pretrained else None
+        base_model = models.mobilenet_v3_large(weights=weights)
+
+        # Extract features (everything except classifier)
+        self.backbone = base_model.features
+
+        # Get the number of output features from backbone
+        # MobileNetV3-Large outputs 960 features
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, self.config.input_size, self.config.input_size)
+            features = self.backbone(dummy)
+            in_features = features.shape[1]
+
+        # Custom regression head with larger hidden dim for larger backbone
+        self.head = RegressionHead(
+            in_features=in_features,
+            hidden_dim=512,
+            dropout=dropout,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+
+        Args:
+            x: Input tensor (B, 3, H, W)
+
+        Returns:
+            Lane center predictions (B, 1) in range [-1, 1]
+        """
         features = self.backbone(x)
         output = self.head(features)
         return output

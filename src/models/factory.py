@@ -15,6 +15,7 @@ from .base import LaneDetectorBase, ModelConfig
 # Available architectures
 ARCHITECTURES = Literal[
     "mobilenetv3",
+    "mobilenetv3_large",
     "mobilenetv3_v2",
     "efficientnet_lite0",
     "efficientnet_lite1",
@@ -58,6 +59,13 @@ def create_model(
 
         return MobileNetV3LaneV2(pretrained=pretrained, dropout=dropout, config=config)
 
+    elif architecture == "mobilenetv3_large":
+        from .mobilenetv3 import MobileNetV3LargeLane
+
+        return MobileNetV3LargeLane(
+            pretrained=pretrained, dropout=dropout, config=config
+        )
+
     elif architecture.startswith("efficientnet_lite"):
         from .efficientnet import EfficientNetLiteLane
 
@@ -84,6 +92,7 @@ def create_model(
     else:
         available = [
             "mobilenetv3",
+            "mobilenetv3_large",
             "mobilenetv3_v2",
             "efficientnet_lite0",
             "efficientnet_lite1",
@@ -101,6 +110,7 @@ def list_architectures() -> list[str]:
     """List all available architectures."""
     return [
         "mobilenetv3",
+        "mobilenetv3_large",
         "mobilenetv3_v2",
         "efficientnet_lite0",
         "efficientnet_lite1",
