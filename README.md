@@ -110,7 +110,45 @@ lane-detection export --checkpoint outputs/checkpoints/best.pt --output model.on
 lane-detection export --checkpoint outputs/checkpoints/best.pt --output model.engine --tensorrt --fp16
 ```
 
-### 7. Deploy with ROS2
+### 7. Test the Model
+
+Test on a single image:
+```bash
+# Basic inference
+lane-detection test --image test.jpg --checkpoint outputs/checkpoints/best.pt
+
+# With visualization output
+lane-detection test --image test.jpg --checkpoint best.pt --output result.jpg
+
+# With crop preset (useful for raw camera images)
+lane-detection test --image raw.jpg --checkpoint best.pt --crop bottom-half --output result.jpg
+```
+
+Batch test on a directory of images:
+```bash
+# Process all images in a directory
+lane-detection test --image data/test_images/ --checkpoint best.pt --output results/
+
+# Custom CSV output path
+lane-detection test --image data/test_images/ --checkpoint best.pt --csv predictions.csv
+
+# Generate a video from results
+lane-detection test --image data/test_images/ --checkpoint best.pt --video results.mp4
+
+# Video with custom frame rate (default: 10 fps)
+lane-detection test --image data/test_images/ --checkpoint best.pt --video results.mp4 --fps 30
+
+# With ONNX model
+lane-detection test --image data/test_images/ --checkpoint model.onnx --output results/
+```
+
+Batch mode outputs:
+- CSV file with predictions for each image (filename, path, offset)
+- Optional visualizations saved to the output directory
+- Optional video file combining all visualizations
+- Statistics summary (mean, std, min, max, distribution)
+
+### 8. Deploy with ROS2
 
 ```bash
 ros2 run lane_detection inference_node --ros-args \
@@ -130,6 +168,7 @@ The node publishes lane offset to `/lane_detection/offset` (std_msgs/Float32).
 | `prepare` | Select diverse frames for annotation |
 | `convert` | Convert Roboflow annotations to training format |
 | `train` | Train the lane detection model |
+| `test` | Test model on a single image or batch |
 | `export` | Export model to ONNX or TensorRT |
 | `info` | Show model architecture information |
 

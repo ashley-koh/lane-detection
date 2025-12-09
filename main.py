@@ -137,10 +137,10 @@ def cmd_train(args: argparse.Namespace) -> int:
     from torch.utils.data import DataLoader
 
     from src.models.factory import create_model
-    from src.dataset.dataset import LaneDataset
+    from src.dataset.dataset import LaneDatasetFromDirectory
     from src.dataset.augmentations import (
-        get_training_augmentations,
-        get_validation_augmentations,
+        get_train_transforms,
+        get_val_transforms,
     )
     from src.training.trainer import Trainer, TrainingConfig
 
@@ -178,16 +178,18 @@ def cmd_train(args: argparse.Namespace) -> int:
     # Create datasets
     data_dir = Path(args.data_dir)
 
-    train_aug = get_training_augmentations(args.image_size)
-    val_aug = get_validation_augmentations(args.image_size)
+    train_aug = get_train_transforms(args.image_size)
+    val_aug = get_val_transforms(args.image_size)
 
-    train_dataset = LaneDataset(
-        data_dir=data_dir / "train",
+    train_dataset = LaneDatasetFromDirectory(
+        data_dir=data_dir,
+        split="train",
         transform=train_aug,
         horizontal_flip_prob=0.5,
     )
-    val_dataset = LaneDataset(
-        data_dir=data_dir / "val",
+    val_dataset = LaneDatasetFromDirectory(
+        data_dir=data_dir,
+        split="val",
         transform=val_aug,
         horizontal_flip_prob=0.0,
     )
@@ -289,6 +291,349 @@ def cmd_export(args: argparse.Namespace) -> int:
         )
 
     print(f"\nModel exported to: {output_path}")
+    return 0
+
+
+def _load_model_for_inference(checkpoint_path: Path, architecture: str):
+    """Load model for inference, returns (model_or_session, use_onnx, device)."""
+    import torch
+
+    if checkpoint_path.suffix == ".onnx":
+        import onnxruntime as ort
+
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        session = ort.InferenceSession(str(checkpoint_path), providers=providers)
+        return session, True, None
+    else:
+        from src.models.factory import create_model
+
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        model = create_model(architecture=architecture, pretrained=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.eval()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+        return model, False, device
+
+
+def _run_inference(model_or_session, input_tensor, use_onnx: bool, device):
+    """Run inference and return offset value."""
+    import torch
+
+    if use_onnx:
+        input_name = model_or_session.get_inputs()[0].name
+        input_array = input_tensor.numpy()
+        output = model_or_session.run(None, {input_name: input_array})[0]
+        offset = float(output.flatten()[0])
+    else:
+        input_tensor = input_tensor.to(device)
+        with torch.no_grad():
+            output = model_or_session(input_tensor)
+        offset = float(output.cpu().numpy().flatten()[0])
+
+    return max(-1.0, min(1.0, offset))
+
+
+def _create_visualization(image, offset: float):
+    """Create visualization with center line, offset line, and legend."""
+    import cv2
+
+    vis_image = image.copy()
+    h, w = vis_image.shape[:2]
+
+    # Draw center line (green)
+    center_x = w // 2
+    cv2.line(vis_image, (center_x, 0), (center_x, h), (0, 255, 0), 2)
+
+    # Draw predicted offset line (red)
+    offset_x = int(center_x + offset * (w // 2))
+    cv2.line(vis_image, (offset_x, 0), (offset_x, h), (0, 0, 255), 3)
+
+    # Draw arrow from center to offset
+    arrow_y = h // 2
+    cv2.arrowedLine(
+        vis_image,
+        (center_x, arrow_y),
+        (offset_x, arrow_y),
+        (255, 0, 0),
+        3,
+        tipLength=0.3,
+    )
+
+    # Add text overlay
+    text = f"Offset: {offset:.4f}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.0
+    thickness = 2
+    (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+
+    # Draw text background
+    cv2.rectangle(vis_image, (5, 5), (15 + text_w, 15 + text_h), (0, 0, 0), -1)
+    cv2.putText(
+        vis_image,
+        text,
+        (10, 10 + text_h),
+        font,
+        font_scale,
+        (255, 255, 255),
+        thickness,
+    )
+
+    # Add legend
+    legend_y = 50 + text_h
+    cv2.putText(vis_image, "Green: center", (10, legend_y), font, 0.5, (0, 255, 0), 1)
+    cv2.putText(
+        vis_image, "Red: predicted", (10, legend_y + 20), font, 0.5, (0, 0, 255), 1
+    )
+
+    return vis_image
+
+
+def _get_image_files(directory: Path) -> list[Path]:
+    """Get all image files from a directory."""
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    files = []
+    for f in directory.iterdir():
+        if f.is_file() and f.suffix.lower() in image_extensions:
+            files.append(f)
+    return sorted(files)
+
+
+def cmd_test(args: argparse.Namespace) -> int:
+    """Test the model on a single image or batch of images."""
+    import csv
+    import cv2
+
+    from src.dataset.augmentations import get_inference_transforms
+
+    # Determine if single image or batch mode
+    if args.image:
+        image_path = Path(args.image)
+        if image_path.is_dir():
+            # Batch mode: --image points to a directory
+            image_files = _get_image_files(image_path)
+            if not image_files:
+                print(f"Error: No images found in {image_path}")
+                return 1
+            batch_mode = True
+            print(f"Batch mode: found {len(image_files)} images in {image_path}")
+        else:
+            # Single image mode
+            if not image_path.exists():
+                print(f"Error: Image not found: {image_path}")
+                return 1
+            image_files = [image_path]
+            batch_mode = False
+    else:
+        print("Error: --image is required")
+        return 1
+
+    # Load model
+    checkpoint_path = Path(args.checkpoint)
+    if not checkpoint_path.exists():
+        print(f"Error: Checkpoint not found: {checkpoint_path}")
+        return 1
+
+    print(f"Loading checkpoint: {checkpoint_path}")
+    model_or_session, use_onnx, device = _load_model_for_inference(
+        checkpoint_path, args.architecture
+    )
+    if use_onnx:
+        print("Using ONNX Runtime for inference")
+    else:
+        print(f"Using PyTorch model on {device}")
+
+    # Get transform
+    transform = get_inference_transforms(args.image_size)
+
+    # Parse crop region once if specified
+    crop_params = None
+    if args.crop:
+        from src.preprocessing.crop import parse_crop_region
+
+        # We'll parse per-image since dimensions may vary
+        crop_preset = args.crop
+
+    # Prepare output directory for visualizations in batch mode
+    vis_output_dir = None
+    if batch_mode and args.output:
+        vis_output_dir = Path(args.output)
+        vis_output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving visualizations to: {vis_output_dir}")
+
+    # Prepare video writer if requested
+    video_writer = None
+    video_path = None
+    if batch_mode and args.video:
+        video_path = Path(args.video)
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Will generate video: {video_path}")
+
+    # Results storage for batch mode
+    results = []
+    vis_frames = []  # Store frames for video generation
+
+    # Process images
+    for i, img_path in enumerate(image_files):
+        image = cv2.imread(str(img_path))
+        if image is None:
+            print(f"Warning: Could not load image: {img_path}")
+            continue
+
+        original_h, original_w = image.shape[:2]
+
+        # Apply crop if specified
+        if args.crop:
+            from src.preprocessing.crop import parse_crop_region
+
+            y, x, h, w = parse_crop_region(args.crop, original_h, original_w)
+            image = image[y : y + h, x : x + w]
+
+        # Preprocess image
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        transformed = transform(image=rgb_image)
+        input_tensor = transformed["image"].unsqueeze(0)
+
+        # Run inference
+        offset = _run_inference(model_or_session, input_tensor, use_onnx, device)
+
+        # Store result
+        results.append(
+            {
+                "filename": img_path.name,
+                "path": str(img_path),
+                "offset": offset,
+            }
+        )
+
+        if batch_mode:
+            # Progress indicator
+            if (i + 1) % 10 == 0 or (i + 1) == len(image_files):
+                print(f"Processed {i + 1}/{len(image_files)} images...")
+
+            # Create visualization if needed for output or video
+            if vis_output_dir or video_path:
+                vis_image = _create_visualization(image, offset)
+
+                # Save visualization image if output dir specified
+                if vis_output_dir:
+                    vis_path = vis_output_dir / f"vis_{img_path.stem}.jpg"
+                    cv2.imwrite(str(vis_path), vis_image)
+
+                # Collect frame for video
+                if video_path:
+                    vis_frames.append(vis_image)
+        else:
+            # Single image mode: print detailed result
+            print(f"Loaded image: {img_path} ({original_w}x{original_h})")
+            if args.crop:
+                print(
+                    f"Cropped to: {image.shape[1]}x{image.shape[0]} (preset: {args.crop})"
+                )
+
+            print(f"\n{'=' * 40}")
+            print(f"Predicted lane offset: {offset:.4f}")
+            print(f"{'=' * 40}")
+            print(f"  -1.0 = lane is fully to the left")
+            print(f"   0.0 = lane is centered")
+            print(f"  +1.0 = lane is fully to the right")
+
+            # Create visualization for single image
+            if args.output or args.show:
+                vis_image = _create_visualization(image, offset)
+
+                if args.output:
+                    output_path = Path(args.output)
+                    cv2.imwrite(str(output_path), vis_image)
+                    print(f"\nVisualization saved to: {output_path}")
+
+                if args.show:
+                    cv2.imshow("Lane Detection Result", vis_image)
+                    print("\nPress any key to close the window...")
+                    cv2.waitKey(0)
+                    cv2.destroyAllWindows()
+
+    # Batch mode: save CSV and print summary
+    if batch_mode:
+        # Save CSV results
+        csv_path = (
+            vis_output_dir / "results.csv" if vis_output_dir else Path("results.csv")
+        )
+        if args.csv:
+            csv_path = Path(args.csv)
+
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["filename", "path", "offset"])
+            writer.writeheader()
+            writer.writerows(results)
+
+        print(f"\n{'=' * 50}")
+        print(f"Batch Testing Complete")
+        print(f"{'=' * 50}")
+        print(f"Images processed: {len(results)}")
+        print(f"Results saved to: {csv_path}")
+        if vis_output_dir:
+            print(f"Visualizations saved to: {vis_output_dir}")
+
+        # Generate video if requested
+        if video_path and vis_frames:
+            print(f"\nGenerating video...")
+            fps = args.fps
+            h, w = vis_frames[0].shape[:2]
+
+            # Determine video codec based on file extension
+            ext = video_path.suffix.lower()
+            if ext == ".mp4":
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            elif ext == ".avi":
+                fourcc = cv2.VideoWriter_fourcc(*"XVID")
+            elif ext == ".webm":
+                fourcc = cv2.VideoWriter_fourcc(*"VP80")
+            else:
+                # Default to mp4v
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
+            video_writer = cv2.VideoWriter(str(video_path), fourcc, fps, (w, h))
+
+            for frame in vis_frames:
+                # Ensure all frames have the same size
+                if frame.shape[:2] != (h, w):
+                    frame = cv2.resize(frame, (w, h))
+                video_writer.write(frame)
+
+            video_writer.release()
+            print(f"Video saved to: {video_path} ({len(vis_frames)} frames, {fps} fps)")
+            print(f"Duration: {len(vis_frames) / fps:.1f} seconds")
+
+        # Print statistics
+        offsets = [r["offset"] for r in results]
+        if offsets:
+            import statistics
+
+            print(f"\nStatistics:")
+            print(f"  Mean offset:   {statistics.mean(offsets):+.4f}")
+            print(
+                f"  Std deviation: {statistics.stdev(offsets) if len(offsets) > 1 else 0:.4f}"
+            )
+            print(f"  Min offset:    {min(offsets):+.4f}")
+            print(f"  Max offset:    {max(offsets):+.4f}")
+
+            # Distribution summary
+            left_count = sum(1 for o in offsets if o < -0.1)
+            center_count = sum(1 for o in offsets if -0.1 <= o <= 0.1)
+            right_count = sum(1 for o in offsets if o > 0.1)
+            print(f"\nDistribution:")
+            print(
+                f"  Left (< -0.1):    {left_count:4d} ({100 * left_count / len(offsets):.1f}%)"
+            )
+            print(
+                f"  Center (-0.1~0.1): {center_count:4d} ({100 * center_count / len(offsets):.1f}%)"
+            )
+            print(
+                f"  Right (> 0.1):    {right_count:4d} ({100 * right_count / len(offsets):.1f}%)"
+            )
+
     return 0
 
 
@@ -526,6 +871,61 @@ def main():
         "--architecture", type=str, help="Specific architecture (or all if omitted)"
     )
 
+    # Test command
+    test_parser = subparsers.add_parser(
+        "test", help="Test model on a single image or directory of images"
+    )
+    test_parser.add_argument(
+        "--image",
+        type=str,
+        required=True,
+        help="Path to input image or directory of images (batch mode)",
+    )
+    test_parser.add_argument(
+        "--checkpoint",
+        type=str,
+        required=True,
+        help="Path to model checkpoint (.pt) or ONNX model (.onnx)",
+    )
+    test_parser.add_argument(
+        "--architecture",
+        type=str,
+        default="mobilenetv3",
+        help="Model architecture (for .pt checkpoints)",
+    )
+    test_parser.add_argument(
+        "--image-size", type=int, default=224, help="Model input size"
+    )
+    test_parser.add_argument(
+        "--crop", type=str, help="Crop preset (e.g., 'bottom-half') or 'x,y,w,h'"
+    )
+    test_parser.add_argument(
+        "--output",
+        type=str,
+        help="Save visualization (single image) or visualizations directory (batch)",
+    )
+    test_parser.add_argument(
+        "--csv",
+        type=str,
+        help="Output CSV file path (batch mode, default: results.csv)",
+    )
+    test_parser.add_argument(
+        "--video",
+        type=str,
+        help="Output video file path (batch mode, e.g., output.mp4)",
+    )
+    test_parser.add_argument(
+        "--fps",
+        type=int,
+        default=10,
+        help="Video frame rate (default: 10)",
+    )
+    test_parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Display visualization in window (single image only)",
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -542,6 +942,7 @@ def main():
         "train": cmd_train,
         "export": cmd_export,
         "info": cmd_info,
+        "test": cmd_test,
     }
 
     try:

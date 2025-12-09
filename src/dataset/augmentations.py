@@ -79,21 +79,21 @@ def get_train_transforms(
                 ],
                 p=0.2,
             ),
-            # Noise
-            A.GaussNoise(var_limit=(10.0, 50.0), p=0.2),
+            # Noise (std_range is in [0, 1] scale, ~0.04-0.2 corresponds to old var_limit 10-50)
+            A.GaussNoise(std_range=(0.04, 0.2), p=0.2),
             # Slight geometric transforms (careful not to affect label too much)
-            A.ShiftScaleRotate(
-                shift_limit=0.05,
-                scale_limit=0.1,
-                rotate_limit=5,
+            A.Affine(
+                translate_percent=(-0.05, 0.05),
+                scale=(0.9, 1.1),
+                rotate=(-5, 5),
                 border_mode=cv2.BORDER_CONSTANT,
                 p=0.3,
             ),
             # Image quality degradation
             A.OneOf(
                 [
-                    A.ImageCompression(quality_lower=70, quality_upper=95, p=1.0),
-                    A.Downscale(scale_min=0.7, scale_max=0.9, p=1.0),
+                    A.ImageCompression(quality_range=(70, 95), p=1.0),
+                    A.Downscale(scale_range=(0.7, 0.9), p=1.0),
                 ],
                 p=0.2,
             ),
