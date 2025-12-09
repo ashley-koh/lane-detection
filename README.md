@@ -1,6 +1,6 @@
 # Lane Detection
 
-A lightweight lane detection system for robotic cars running on NVIDIA Jetson. The model outputs a lane offset value (-1 to 1) that can be used for steering control.
+A lightweight lane detection system for robotic cars running on NVIDIA Jetson or Apple Silicon. The model outputs a lane offset value (-1 to 1) that can be used for steering control.
 
 ## Features
 
@@ -36,6 +36,17 @@ sudo apt install ros-humble-rclpy ros-humble-sensor-msgs ros-humble-std-msgs ros
 
 **For TensorRT export** (on Jetson):
 TensorRT is pre-installed on Jetson. Ensure `tensorrt` and `pycuda` are available in your Python environment.
+
+## Supported Platforms
+
+| Platform | Device | Training | Inference |
+|----------|--------|----------|-----------|
+| NVIDIA Jetson | CUDA | Yes | Yes (TensorRT) |
+| Apple Silicon | MPS | Yes | Yes (ONNX) |
+| Linux/Windows (NVIDIA GPU) | CUDA | Yes | Yes |
+| CPU | CPU | Yes (slow) | Yes |
+
+Training automatically detects and uses the best available device (CUDA > MPS > CPU).
 
 ## Quick Start
 
@@ -179,9 +190,12 @@ Run `lane-detection <command> --help` for detailed options.
 | Architecture | Parameters | Recommended For |
 |--------------|------------|-----------------|
 | `mobilenetv3` | ~1.5M | Real-time on Jetson (default) |
-| `mobilenetv3_large` | ~4.2M | Better accuracy |
-| `efficientnet_b0` | ~4M | Good balance |
-| `efficientnet_b2` | ~8M | Higher accuracy |
+| `mobilenetv3_large` | ~4.2M | Higher accuracy, still efficient |
+| `mobilenetv3_v2` | ~1.5M | Alternative head design |
+| `efficientnet_lite0` | ~3M | Lightweight EfficientNet |
+| `efficientnet_lite1` | ~4M | Balanced EfficientNet |
+| `efficientnet_lite2` | ~5M | More accurate EfficientNet |
+| `efficientnet_b0` | ~4M | Standard EfficientNet |
 | `resnet18` | ~11M | Baseline |
 | `resnet34` | ~21M | Maximum accuracy |
 

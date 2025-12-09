@@ -117,7 +117,12 @@ class Trainer:
 
         # Setup device
         if config.device == "auto":
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            elif torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device(config.device)
 
@@ -132,8 +137,13 @@ class Trainer:
         # Setup scheduler
         self._setup_scheduler()
 
-        # Setup AMP
-        self.scaler = torch.amp.GradScaler("cuda") if config.use_amp else None
+        # Setup AMP (only use GradScaler for CUDA)
+        self.use_amp = config.use_amp and self.device.type in ("cuda", "mps")
+        self.scaler = (
+            torch.amp.GradScaler("cuda")
+            if config.use_amp and self.device.type == "cuda"
+            else None
+        )
 
         # Setup logging
         Path(config.log_dir).mkdir(parents=True, exist_ok=True)
@@ -263,14 +273,20 @@ class Trainer:
             self.optimizer.zero_grad()
 
             # Forward pass with AMP
-            if self.config.use_amp:
-                with torch.amp.autocast("cuda"):
+            if self.use_amp:
+                with torch.amp.autocast(self.device.type):
                     outputs = self.model(images)
                     loss = self.criterion(outputs, targets)
 
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                if self.scaler is not None:
+                    # CUDA path with GradScaler
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    # MPS path without GradScaler
+                    loss.backward()
+                    self.optimizer.step()
             else:
                 outputs = self.model(images)
                 loss = self.criterion(outputs, targets)
