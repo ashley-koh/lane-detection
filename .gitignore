@@ -1,0 +1,48 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# uv
+uv.lock
+
+# Data directories
+data/
+rosbags/
+roboflow_export/
+
+# Training outputs
+outputs/
+checkpoints/
+logs/
+
+# Exported models
+*.onnx
+*.engine
+*.plan
+
+# Large files
+*.pt
+*.pth
+*.bin
+*.weights
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

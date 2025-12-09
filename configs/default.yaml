@@ -1,0 +1,207 @@
+# Lane Detection Default Configuration
+# 
+# This configuration file defines the default settings for the lane detection
+# training pipeline. Override these values via CLI arguments or by creating
+# a custom config file.
+#
+# Usage:
+#   lane-detection train --data-dir data/annotated --config configs/default.yaml
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+model:
+  # Architecture: mobilenetv3, mobilenetv3_large, efficientnet_b0, 
+  #               efficientnet_b2, resnet18, resnet34
+  architecture: mobilenetv3
+  
+  # Use ImageNet pretrained weights
+  pretrained: true
+  
+  # Dropout rate in the classifier head
+  dropout: 0.3
+  
+  # Input image size (square)
+  input_size: 224
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+data:
+  # Path to annotated dataset (containing train/, val/, test/ subdirs)
+  data_dir: data/annotated
+  
+  # Batch size for training and validation
+  batch_size: 32
+  
+  # Number of DataLoader workers
+  num_workers: 4
+  
+  # Train/val/test split ratios (when converting annotations)
+  split_ratios:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+
+# =============================================================================
+# Augmentation Configuration
+# =============================================================================
+augmentation:
+  # Probability of horizontal flip (lane offset is also flipped)
+  horizontal_flip_prob: 0.5
+  
+  # Color jitter parameters
+  brightness: 0.2
+  contrast: 0.2
+  saturation: 0.2
+  hue: 0.1
+  
+  # Random affine transforms
+  rotation_degrees: 10
+  scale_range: [0.9, 1.1]
+  
+  # Gaussian blur probability
+  blur_prob: 0.1
+
+# =============================================================================
+# Training Configuration
+# =============================================================================
+training:
+  # Number of training epochs
+  epochs: 100
+  
+  # Base learning rate
+  learning_rate: 0.001
+  
+  # Weight decay (L2 regularization)
+  weight_decay: 0.01
+  
+  # Optimizer: adamw, adam, sgd
+  optimizer: adamw
+  
+  # Learning rate scheduler: cosine, step, plateau, none
+  scheduler: cosine
+  
+  # Warmup epochs (linear warmup from 10% of LR)
+  warmup_epochs: 5
+  
+  # Loss function: smooth_l1, mse, mae
+  loss_type: smooth_l1
+  
+  # Use automatic mixed precision (FP16)
+  use_amp: true
+  
+  # Random seed for reproducibility
+  seed: 42
+
+# =============================================================================
+# Backbone Fine-tuning Configuration
+# =============================================================================
+backbone:
+  # Number of epochs to freeze backbone (0 = don't freeze)
+  freeze_epochs: 0
+  
+  # Learning rate multiplier for backbone parameters
+  # (backbone_lr = learning_rate * lr_multiplier)
+  lr_multiplier: 0.1
+
+# =============================================================================
+# Early Stopping Configuration
+# =============================================================================
+early_stopping:
+  # Number of epochs without improvement before stopping
+  patience: 15
+  
+  # Minimum improvement required to count as progress
+  min_delta: 0.001
+
+# =============================================================================
+# Checkpointing Configuration
+# =============================================================================
+checkpointing:
+  # Directory for saving checkpoints
+  checkpoint_dir: outputs/checkpoints
+  
+  # Save checkpoint every N epochs
+  save_every: 10
+  
+  # Always save best model
+  save_best: true
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  # TensorBoard log directory
+  log_dir: outputs/logs
+  
+  # Log training metrics every N steps
+  log_every: 10
+
+# =============================================================================
+# Export Configuration
+# =============================================================================
+export:
+  # ONNX export settings
+  onnx:
+    opset_version: 17
+    dynamic_axes: false
+  
+  # TensorRT export settings
+  tensorrt:
+    # Enable FP16 precision (recommended for Jetson)
+    fp16: true
+    
+    # Enable INT8 precision (requires calibration data)
+    int8: false
+    
+    # Maximum batch size
+    max_batch_size: 1
+    
+    # Workspace size in GB
+    workspace_size_gb: 1.0
+
+# =============================================================================
+# ROS2 Inference Node Configuration
+# =============================================================================
+ros2:
+  # Input image topic
+  image_topic: /camera/image_raw
+  
+  # Output offset topic
+  offset_topic: /lane_detection/offset
+  
+  # Use TensorRT engine (vs ONNX Runtime)
+  use_tensorrt: true
+  
+  # Crop preset: none, bottom_half, bottom_third, bottom_two_thirds, center
+  crop_preset: bottom_half
+  
+  # Publish debug visualization
+  publish_debug: false
+
+# =============================================================================
+# Image Extraction Configuration (from ROS2 bags)
+# =============================================================================
+extraction:
+  # Output image format: png, jpg, jpeg, bmp
+  image_format: png
+  
+  # Extract every Nth frame (1 = all frames)
+  sample_rate: 1
+  
+  # Default output directory
+  output_dir: data/raw
+
+# =============================================================================
+# Preprocessing Configuration
+# =============================================================================
+preprocessing:
+  # Crop preset for training data
+  crop_preset: bottom_half
+  
+  # Number of diverse samples to select for annotation
+  num_annotation_samples: 400
+  
+  # Remove near-duplicate images
+  remove_duplicates: true
