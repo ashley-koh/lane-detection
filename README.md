@@ -53,11 +53,27 @@ lane-detection extract --bag-path ./rosbags/run1 --topic /camera/image_raw --out
 
 ```bash
 # Crop to bottom half (road region)
-lane-detection crop --input-dir data/raw --output-dir data/cropped --crop-region bottom_half
+lane-detection crop --input-dir data/raw --output-dir data/cropped --crop-region bottom-half
+
+# List available crop presets
+lane-detection crop --list-presets
 
 # Select diverse frames for annotation
 lane-detection prepare --input-dir data/cropped --output-dir data/to_annotate --num-samples 400
 ```
+
+#### Crop Presets
+
+| Preset | Description |
+|--------|-------------|
+| `bottom-half` | Bottom 50% of the image (full width) |
+| `bottom-third` | Bottom 33% of the image (full width) |
+| `bottom-left` | Bottom-left quarter of the image |
+| `bottom-right` | Bottom-right quarter of the image |
+| `center-strip` | Middle third horizontal strip |
+| `lower-center` | Bottom 50% height, center 50% width |
+
+Custom regions can also be specified as `x,y,width,height`.
 
 ### 3. Annotate with Roboflow
 
